@@ -5,7 +5,7 @@ use reqwest::Url;
 use select::document::Document;
 use select::predicate::{Attr, Predicate};
 
-use crate::fetcher::Data;
+use crate::get::Data;
 use crate::Result;
 
 

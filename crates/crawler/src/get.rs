@@ -4,7 +4,6 @@ use bytes::Bytes;
 use reqwest::{blocking::{Client, Response}, header::CONTENT_TYPE, Url};
 
 use crate::Result;
-use crate::Error;
 
 pub(crate) struct GetHandle(Client);
 
@@ -40,16 +39,16 @@ impl GetHandle {
         let mut resp = self.0.get(url.clone())
         .send().map_err(|e| (url.clone(), e))?;
 
-        print!("Status for {}: {}", url, resp.status());
-        if resp.status().is_server_error() || resp.status().is_client_error() {
-            println!();
-            return Err
-            (
-                Error::from((url, resp.error_for_status().unwrap_err()))
-            )
-        } else {
-            println!(", Type: {:?}", resp.headers().get(CONTENT_TYPE).unwrap());
-        }
+        // print!("Status for {}: {}", url, resp.status());
+        // if resp.status().is_server_error() || resp.status().is_client_error() {
+        //     println!();
+        //     return Err
+        //     (
+        //         Error::from((url, resp.error_for_status().unwrap_err()))
+        //     )
+        // } else {
+        //     println!(", Type: {:?}", resp.headers().get(CONTENT_TYPE).unwrap());
+        // }
 
         match check_html(&resp, &url) {
             true => {

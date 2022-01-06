@@ -1,5 +1,5 @@
 mod scraper;
-mod fetcher;
+mod get;
 mod url;
 mod parallel;
 
@@ -95,6 +95,7 @@ impl<S: AsRef<str>> From<(S, String)> for Error {
 }
 
 
+
 #[cfg(test)]
 mod tests {
     use crate::ScraperBuilder;
@@ -102,9 +103,9 @@ mod tests {
 
     #[test]
     fn maintest() {
-        let origin_url = "https://rolisz.ro/";
+        let origin_url = "https://rolisz.ro/2020/03/01/web-crawler-in-rust/use";
         let threads = 8;
-        let depth = 3;
+        let depth = 1;
 
         let mut scrpr = ScraperBuilder::new(origin_url)
             .threads(threads)
