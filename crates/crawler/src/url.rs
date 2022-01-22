@@ -27,6 +27,7 @@ pub(crate) fn filter_visited(found_urls: HashSet<Url>, visited: &HashSet<Url>, o
         }).cloned().collect()
 }
 
+#[allow(dead_code)]
 pub(crate) fn filter_host(found_urls: &mut HashSet<Url>, origin_url: &Url) {
     found_urls.retain(|url| url.host_str() == origin_url.host_str())
 }
