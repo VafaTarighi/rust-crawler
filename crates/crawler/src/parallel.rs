@@ -1,5 +1,6 @@
-use std::{sync::mpsc::{Receiver, Sender, self, TryRecvError}, collections::HashSet, thread::{JoinHandle, self}};
+use std::{collections::HashSet, thread::{self, JoinHandle}};
 
+use crossbeam_channel::{Sender, Receiver};
 use reqwest::Url;
 
 use crate::{get::GetHandle, Error, url::{get_links_from_html, write_to_file}};
@@ -7,20 +8,21 @@ use crate::{get::GetHandle, Error, url::{get_links_from_html, write_to_file}};
 
 pub(crate) enum ReqMsg {
     FETCH(Url),
-    READY,
     EXIT,
 }
 
 pub(crate) enum RspMsg {
-    READY,
-    RESPOND(HashSet<Url>, Option<Error>)
+    PAGE(HashSet<Url>),
+    ERROR(Error),
+    FIN
 }
 
 pub struct FetchPool {
     t_count: usize,
+    url_tx: Sender<ReqMsg>,
+    fetch_rx: Receiver<RspMsg>,
     ft_handles: Vec<FetchThreadHandle>,
-    result_set: HashSet<Url>,
-    error_vec: Vec<Error>
+    work: usize
 }
 
 impl FetchPool {
@@ -28,22 +30,30 @@ impl FetchPool {
 
         let mut ft_handles = vec![];
 
+        let (url_tx, url_rx) = crossbeam_channel::unbounded();
+        let (fetch_tx, fetch_rx) = crossbeam_channel::unbounded();
+
         // spawn threads
         for _ in 0..t_count {
 
             ft_handles.push(
-                FetchThread::spawn()
+                FetchThread::spawn(fetch_tx.clone(), url_rx.clone())
             );
 
         }
 
         Self {
             t_count,
+            url_tx,
+            fetch_rx,
             ft_handles,
-            result_set: HashSet::new(),
-            error_vec: vec![]
+            work: 0
         }
 
+    }
+
+    fn recv(&self) -> RspMsg {
+        self.fetch_rx.recv().unwrap()
     }
 
     #[allow(dead_code)]
@@ -52,85 +62,67 @@ impl FetchPool {
     }
 
     pub(crate) fn fetch_single(&mut self, url: &Url) {
-        if let Some(ft_handle) = self.ft_handles.iter().next() {
-            match ft_handle.recv() {
-                RspMsg::RESPOND(urls, e) => {
-                    self.result_set.extend(urls);
-                    if let Some(e) = e {
-                        self.error_vec.push(e);
-                    }
+        self.work += 1;
+        self.url_tx.send(ReqMsg::FETCH(url.to_owned())).unwrap();
+    }
+
+    pub(crate) fn fetch(&mut self, page: HashSet<Url>) {
+        self.work += page.len();
+
+        page.iter()
+            .for_each(|url| {
+                self.fetch_single(url)
+            });
+    }
+
+    pub(crate) fn fetch_current(&mut self) -> Option<(Vec<HashSet<Url>>, Vec<Error>)> {
+        if self.work == 0 {
+            return None
+        }
+        let mut pages = vec![];
+        let mut errors = vec![];
+        for msg in self.fetch_rx.try_iter() {
+            match msg {
+                RspMsg::PAGE(page) => {
+                    self.work -= 1;
+                    pages.push(page)
                 },
-                RspMsg::READY => {
-                    ft_handle.fetch(&url);
-                }
+                RspMsg::FIN => self.work -= 1,
+                RspMsg::ERROR(e) => errors.push(e)
             }
         }
+        
+        Some((pages, errors))
     }
 
-    pub(crate) fn fetch(&mut self, new_urls: HashSet<Url>) {
-        let mut ft_cycler = self.ft_handles.iter().cycle();
-        for url in new_urls.into_iter() {
-            while let Some(ft_handle) = ft_cycler.next() {
-                match ft_handle.try_recv() {
-                    Ok(msg) => {
-                        match msg {
-                            RspMsg::RESPOND(urls, e) => {
-                                self.result_set.extend(urls);
-                                if let Some(e) = e {
-                                    self.error_vec.push(e);
-                                }
-                            },
-                            RspMsg::READY => {
-                                ft_handle.fetch(&url);
-                                break;
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        match e {
-                            mpsc::TryRecvError::Empty => continue,
-                            mpsc::TryRecvError::Disconnected => panic!("{}", e)
-                        }
-                    }
-                }
-            }
+    pub(crate) fn get_page(&mut self) -> Option<(HashSet<Url>, Option<Error>)> {
+        if self.work == 0 {
+            return None
         }
-    }
+        let msg = self.recv();
+        self.work -= 1;
 
-    pub(crate) fn get_results(&mut self) -> (HashSet<Url>, String) {
-
-        for ft_handle in self.ft_handles.iter() {
-            match ft_handle.recv() {
-                RspMsg::READY => ft_handle.ready(),
-
-                RspMsg::RESPOND(urls, e) => {
-                    self.result_set.extend(urls);
-                    if let Some(e) = e {
-                        self.error_vec.push(e);
-                    }
-                }
-            }
+        match msg {
+            RspMsg::PAGE(page) => Some((page, None)),
+            RspMsg::FIN => Some((HashSet::new(), None)),
+            RspMsg::ERROR(e) => Some((HashSet::new(), Some(e)))
         }
 
-
-        let err_msgs = format!(
-            "Errors: {:#?}", self.error_vec 
-        );
-        self.error_vec.clear();
-
-        let res = self.result_set.clone();
-        self.result_set.clear();
-
-        (res, err_msgs)
     }
 
     pub(crate) fn close(mut self) {
+
+        for _ in 0..self.t_count {
+            self.url_tx.send(ReqMsg::EXIT).unwrap();
+        }
+
         let vc = vec![];
         let fths = self.ft_handles;
         self.ft_handles = vc;
-        for ft_handle in fths.into_iter() {
-            ft_handle.kill()
-        }
+        fths.into_iter()
+            .for_each(|fth| {
+                fth.kill()
+            })
     }
     
 
@@ -139,27 +131,22 @@ impl FetchPool {
 struct FetchThread;
 
 impl FetchThread {
-    fn spawn() -> FetchThreadHandle {
+    fn spawn(fetch_tx: Sender<RspMsg>, url_rx: Receiver<ReqMsg>) -> FetchThreadHandle {
         let get_handle = GetHandle::new();
-        let (to_thread, from_master) = mpsc::channel();
-        let (to_master, from_thread) = mpsc::channel();
 
         let mth = MasterThreadHandle {
-            to_master,
-            from_master
+            fetch_tx,
+            url_rx
         };
 
         let handle = thread::spawn(move || {
 
             loop {
                 // to_master.send(RspMsg::READY).unwrap();
-                mth.ready();
                 
                 match mth.receive() {
 
                     ReqMsg::EXIT => break,
-
-                    ReqMsg::READY => continue,
 
                     ReqMsg::FETCH(url) => {
                         
@@ -167,6 +154,7 @@ impl FetchThread {
                         let fetch = get_handle.get_url(url);
                         if fetch.is_err() {
                             mth.send_err(fetch.unwrap_err());
+                            mth.send_fin();
                             continue;
                         }
 
@@ -176,6 +164,8 @@ impl FetchThread {
                             let found_urls = get_links_from_html(&fetch);
                             println!("Visited: {} found {} links", fetch.get_url(), found_urls.len());
                             mth.send_urls(found_urls);
+                        } else {
+                            mth.send_fin();
                         }
 
                         let write_res = write_to_file(fetch);
@@ -190,64 +180,42 @@ impl FetchThread {
             }
         });
 
-        FetchThreadHandle {
-            join_handle: handle,
-            to_thread,
-            from_thread
-        }
+        FetchThreadHandle(handle)
     }
 
 }
 
-struct MasterThreadHandle {
-    to_master: Sender<RspMsg>,
-    from_master: Receiver<ReqMsg>
-}
 
-impl MasterThreadHandle {
-    fn ready(&self) {
-        self.to_master.send(RspMsg::READY).unwrap()
-    }
-
-    fn send_urls(&self, found_urls: HashSet<Url>) {
-        self.to_master.send(RspMsg::RESPOND(found_urls, None)).unwrap();
-    }
-
-    fn send_err(&self, e: Error) {
-        self.to_master.send(RspMsg::RESPOND(HashSet::new(), Some(e))).unwrap();
-    }
-
-    fn receive(&self) -> ReqMsg {
-        self.from_master.recv().unwrap()
-    }
-}
-
-struct FetchThreadHandle {
-    join_handle: JoinHandle<()>,
-    to_thread: Sender<ReqMsg>,
-    from_thread: Receiver<RspMsg>
-}
+struct FetchThreadHandle(JoinHandle<()>);
 
 impl FetchThreadHandle {
     fn kill(self) {
-        self.to_thread.send(ReqMsg::EXIT).unwrap();
-        self.join_handle.join().unwrap();
+        self.0.join().unwrap();
+    }
+}
+
+
+struct MasterThreadHandle {
+    fetch_tx: Sender<RspMsg>,
+    url_rx: Receiver<ReqMsg>
+}
+
+impl MasterThreadHandle {
+
+    fn send_urls(&self, found_urls: HashSet<Url>) {
+        self.fetch_tx.send(RspMsg::PAGE(found_urls)).unwrap();
     }
 
-    fn ready(&self) {
-        self.to_thread.send(ReqMsg::READY).unwrap()
+    fn send_fin(&self) {
+        self.fetch_tx.send(RspMsg::FIN).unwrap();
     }
 
-    fn fetch(&self, url: &Url) {
-        self.to_thread.send(ReqMsg::FETCH(url.to_owned())).unwrap();
+    fn send_err(&self, e: Error) {
+        self.fetch_tx.send(RspMsg::ERROR(e)).unwrap();
     }
 
-    fn recv(&self) -> RspMsg {
-        self.from_thread.recv().unwrap()
-    }
-
-    fn try_recv(&self) -> Result<RspMsg, TryRecvError> {
-        self.from_thread.try_recv()
+    fn receive(&self) -> ReqMsg {
+        self.url_rx.recv().unwrap()
     }
 }
 

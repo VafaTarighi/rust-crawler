@@ -18,14 +18,18 @@ fn main() {
                 .map_err(|_| "expected a positive integer value")
             )
             .help("sets number of thread used to fetch data")
-        ).arg(Arg::new("Depth")
-            .short('d')
-            .long("depth")
+        ).arg(Arg::new("Pages")
+            .short('p')
+            .long("pages")
             .takes_value(true)
             .validator(|t| t.parse::<usize>()
                 .map_err(|_| "expected a positive integer value")
             )
-            .help("incidates depth of crawling")
+            .help("sets number of pages to crawl")
+        ).arg(Arg::new("Hostonly")
+            .short('h')
+            .long("hostonly")
+            .help("crawl pages from this host only")
         ).get_matches();
 
         let origin_url = matches.value_of("URL").unwrap();
@@ -34,8 +38,12 @@ fn main() {
         if let Some(t) = matches.value_of("Threads") {
             scraper_builder = scraper_builder.threads(t.parse().unwrap());
         }
-        if let Some(d) = matches.value_of("Depth") {
+        if let Some(d) = matches.value_of("Pages") {
             scraper_builder = scraper_builder.depth(d.parse().unwrap());
+        }
+
+        if matches.is_present("Hostonly") {
+            scraper_builder = scraper_builder.host_only(true);
         }
 
         let mut scraper = scraper_builder.build();

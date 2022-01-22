@@ -15,11 +15,16 @@ const SF_OPTIONS: sanitize_filename::Options = sanitize_filename::Options {
     windows: true
 };
 
-pub(crate) fn filter_visited(found_urls: HashSet<Url>, visited: &HashSet<Url>) -> HashSet<Url> {
+pub(crate) fn filter_visited(found_urls: HashSet<Url>, visited: &HashSet<Url>, origin_url: &Url, host_only: bool) -> HashSet<Url> {
     found_urls
-        .difference(&visited)
-        .cloned()
-        .collect()
+        .difference(visited)
+        .filter(|url| {
+            if host_only {
+                origin_url.host_str() == url.host_str()
+            } else {
+                true
+            }
+        }).cloned().collect()
 }
 
 pub(crate) fn filter_host(found_urls: &mut HashSet<Url>, origin_url: &Url) {

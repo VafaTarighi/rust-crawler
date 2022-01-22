@@ -21,7 +21,7 @@ impl ScraperBuilder {
             origin_url: origin_url.to_string(), 
             thread_count: num_cpus::get(), 
             depth: std::usize::MAX,
-            host_only: true
+            host_only: false
         }
     }
 
@@ -105,7 +105,7 @@ mod tests {
     fn maintest() {
         let origin_url = "https://rolisz.ro/2020/03/01/web-crawler-in-rust/use";
         let threads = 8;
-        let depth = 1;
+        let depth = 100;
 
         let mut scrpr = ScraperBuilder::new(origin_url)
             .threads(threads)

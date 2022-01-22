@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 use reqwest::Url;
 
-use crate::{url::{filter_visited, filter_host}, parallel::FetchPool};
+use crate::{url::filter_visited, parallel::FetchPool};
 
 
 
@@ -27,41 +27,50 @@ impl Scraper {
 
         self.visited.insert(self.origin_url.to_owned());
 
-        let (found_urls, errors_str) = fpool.get_results();
-        if errors_str != "Errors: []" {
-            println!("{}", errors_str);
+        let (page, error) = fpool.get_page().unwrap();
+        if let Some(e) = error {
+            println!("{:#?}", e);
         }
         
-        let mut new_urls = filter_visited(found_urls, &self.visited);
-        if self.host_only {
-            filter_host(&mut new_urls, &self.origin_url);
-        }
+        let page = filter_visited(page, &self.visited, &self.origin_url, self.host_only);
+
+        let mut page_count = 0;
+        let mut  page_vec = vec![];
+        page_vec.push(page);
+
+        while page_count <= self.depth {
 
 
+            while !page_vec.is_empty() {
 
+                let mut page = page_vec.pop().unwrap();
+                page = filter_visited(page, &self.visited, &self.origin_url, self.host_only);
+                self.visited.extend(page.clone());
 
-        for _ in 0..self.depth {
-            if new_urls.is_empty() {
+                fpool.fetch(page);
+                page_count += 1;
+                if page_count > self.depth {
+                    break;
+                }
+            }
+
+            if page_count > self.depth {
                 break;
             }
 
-            fpool.fetch(new_urls.to_owned());
-
-            self.visited.extend(new_urls);
-
-            let (found_urls, errors_str) = fpool.get_results();
-            println!("{}", errors_str);
-
-            new_urls = filter_visited(found_urls, &self.visited);
-            if self.host_only {
-                filter_host(&mut new_urls, &self.origin_url);
+            if let Some(mut results) = fpool.fetch_current() {
+                page_vec.append(&mut results.0);
+                if !results.1.is_empty() {
+                    println!("Errors: {:#?}", results.1);
+                }
+            } else {
+                break;
             }
-
         }
 
         fpool.close();
 
-        println!("--------------------------------------------------------------->");
+        println!("--------------------------------------------------FINISHED--------------------------------------------------");
         println!("\nVisited URLs: {}", self.visited.len());
         println!("elapsed time {}s", now.elapsed().as_secs());
 
