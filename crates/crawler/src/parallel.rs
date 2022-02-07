@@ -71,11 +71,12 @@ impl FetchPool {
 
         page.iter()
             .for_each(|url| {
-                self.fetch_single(url)
+                // self.fetch_single(url)
+                self.url_tx.send(ReqMsg::FETCH(url.to_owned())).unwrap();
             });
     }
 
-    pub(crate) fn fetch_current(&mut self) -> Option<(Vec<HashSet<Url>>, Vec<Error>)> {
+    pub(crate) fn get_current(&mut self) -> Option<(Vec<HashSet<Url>>, Vec<Error>)> {
         if self.work == 0 {
             return None
         }

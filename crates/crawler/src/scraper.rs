@@ -58,8 +58,18 @@ impl Scraper {
                 break;
             }
 
-            if let Some(mut results) = fpool.fetch_current() {
+            if let Some(mut results) = fpool.get_current() {
                 page_vec.append(&mut results.0);
+                if !results.1.is_empty() {
+                    println!("Errors: {:#?}", results.1);
+                }
+            } else {
+                break;
+            }
+        }
+
+        loop {
+            if let Some(results) = fpool.get_current() {
                 if !results.1.is_empty() {
                     println!("Errors: {:#?}", results.1);
                 }
