@@ -3,14 +3,14 @@ mod get;
 mod url;
 mod parallel;
 
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt::Display};
 
 use scraper::Scraper;
 use reqwest::Url;
 
 pub struct ScraperBuilder {
     origin_url: String,
-    thread_count: usize,
+    worker_count: usize,
     depth: usize,
     host_only: bool
 }
@@ -19,14 +19,14 @@ impl ScraperBuilder {
     pub fn new(origin_url: &str) -> Self {
         ScraperBuilder {
             origin_url: origin_url.to_string(), 
-            thread_count: num_cpus::get(), 
+            worker_count: num_cpus::get(), 
             depth: std::usize::MAX,
             host_only: false
         }
     }
 
-    pub fn threads(mut self, thread_count: usize) -> Self {
-        self.thread_count = thread_count;
+    pub fn workers(mut self, thread_count: usize) -> Self {
+        self.worker_count = thread_count;
         self
     }
 
@@ -46,7 +46,7 @@ impl ScraperBuilder {
 
         Ok(Scraper {
             origin_url: origin_url,
-            thread_count: self.thread_count,
+            worker_count: self.worker_count,
             visited: HashSet::new(),
             depth: self.depth,
             host_only: self.host_only
@@ -59,36 +59,46 @@ impl ScraperBuilder {
 // costum error handling
 #[derive(Debug)]
 pub enum Error {
-    Write { url: String, e: IoErr },
-    Fetch { url: String, e: reqwest::Error },
-    Build { url: String, e: String}
+    Write { url: Url, e: IoErr },
+    Fetch { url: Url, e: reqwest::Error },
+    Scraper { msg: String, e: String}
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Write {url, e} => write!(f, "ERROR: Write {{\n\t{}\n\t{:#?}\n}}",url, e),
+            Self::Fetch {url, e} => write!(f, "ERROR: Fetch {{\n\t{}\n\t{:#?}\n}}",url, e),
+            Self::Scraper {msg, e} => write!(f, "ERROR: Scraper {{\n\t{}\n\t{:#?}\n}}",msg, e)
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 type IoErr = std::io::Error;
 
-impl<S: AsRef<str>> From<(S, IoErr)> for Error {
-    fn from((url, e): (S, IoErr)) -> Self {
+impl From<(Url, IoErr)> for Error {
+    fn from((url, e): (Url, IoErr)) -> Self {
         Error::Write {
-            url: url.as_ref().to_string(),
-            e,
+            url,
+            e
         }
     }
 }
 
-impl<S: AsRef<str>> From<(S, reqwest::Error)> for Error {
-    fn from((url, e): (S, reqwest::Error)) -> Self {
+impl From<(Url, reqwest::Error)> for Error {
+    fn from((url, e): (Url, reqwest::Error)) -> Self {
         Error::Fetch {
-            url: url.as_ref().to_string(),
+            url,
             e,
         }
     }
 }
 
 impl<S: AsRef<str>> From<(S, String)> for Error {
-    fn from((url, e): (S, String)) -> Self {
-        Error::Build {
-            url: url.as_ref().to_string(),
+    fn from((msg, e): (S, String)) -> Self {
+        Error::Scraper {
+            msg: msg.as_ref().to_string(),
             e,
         }
     }
@@ -103,17 +113,17 @@ mod tests {
 
     #[test]
     fn maintest() {
-        let origin_url = "https://rolisz.ro/2020/03/01/web-crawler-in-rust/use";
-        let threads = 8;
-        let depth = 100;
+        let origin_url = "https://rolisz.ro/";
+        let workers = 8;
+        let depth = 2;
 
         let mut scrpr = ScraperBuilder::new(origin_url)
-            .threads(threads)
+            .workers(workers)
             .depth(depth)
             .build();
 
             match &mut scrpr {
-                Err(e) => println!("Build Error: {:#?}", e),
+                Err(e) => println!("{}", e),
                 Ok(scrpr) => scrpr.start()
             }
 

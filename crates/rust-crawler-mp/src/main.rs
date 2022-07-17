@@ -1,4 +1,4 @@
-use crawler::ScraperBuilder;
+use crawler_mp::ScraperBuilder;
 
 use clap::App;
 use clap::Arg;
@@ -10,9 +10,9 @@ fn main() {
         .author("vafa tarighi <vafatarighi1379@gmail.com>")
         .arg(Arg::new("URL")
         .required(true))
-        .arg(Arg::new("Threads")
-            .short('t')
-            .long("threads")
+        .arg(Arg::new("Workers")
+            .short('w')
+            .long("workers")
             .takes_value(true)
             .validator(|t| t.parse::<usize>()
                 .map_err(|_| "expected a positive integer value")
@@ -29,14 +29,14 @@ fn main() {
         ).arg(Arg::new("Hostonly")
             .short('h')
             .long("hostonly")
-            .help("crawl pages from this host only")
+            .help("crawl pages from other hosts")
         ).get_matches();
 
         let origin_url = matches.value_of("URL").unwrap();
 
         let mut scraper_builder = ScraperBuilder::new(origin_url);
-        if let Some(t) = matches.value_of("Threads") {
-            scraper_builder = scraper_builder.threads(t.parse().unwrap());
+        if let Some(t) = matches.value_of("Workers") {
+            scraper_builder = scraper_builder.workers(t.parse().unwrap());
         }
         if let Some(d) = matches.value_of("Pages") {
             scraper_builder = scraper_builder.depth(d.parse().unwrap());

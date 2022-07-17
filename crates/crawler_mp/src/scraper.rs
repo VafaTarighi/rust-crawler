@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 use std::time::Instant;
 use reqwest::Url;
 
@@ -9,7 +9,7 @@ use crate::{url::filter_visited, parallel::FetchPool};
 #[derive(Debug, PartialEq)]
 pub struct Scraper {
     pub(crate) origin_url: Url,
-    pub(crate) thread_count: usize,
+    pub(crate) worker_count: usize,
     pub(crate) visited: HashSet<Url>,
     pub(crate) depth: usize,
     pub(crate) host_only: bool
@@ -21,18 +21,23 @@ impl Scraper {
         let now = Instant::now();
 
 
+        let mut fpool = FetchPool::new(self.worker_count);
+
         // request for origin_url and fetch the page and
-        let mut fpool = FetchPool::new(self.thread_count);
-        fpool.fetch_single(&self.origin_url);
+        let mut p = HashSet::new();
+        p.insert(self.origin_url.clone());
+        fpool.fetch(p);
 
         self.visited.insert(self.origin_url.to_owned());
-
-        let (page, error) = fpool.get_page().unwrap();
-        if let Some(e) = error {
-            println!("{:#?}", e);
+        let page = fpool.get_wait();
+        if let None = page {
+            fpool.close();
+            finished(now, 1);
+            
+            return;
         }
         
-        let page = filter_visited(page, &self.visited, &self.origin_url, self.host_only);
+        let page = filter_visited(page.unwrap()[0].clone(), &self.visited, &self.origin_url, self.host_only);
 
         let mut page_count = 0;
         let mut  page_vec = vec![];
@@ -58,21 +63,8 @@ impl Scraper {
                 break;
             }
 
-            if let Some(mut results) = fpool.get_current() {
-                page_vec.append(&mut results.0);
-                if !results.1.is_empty() {
-                    println!("Errors: {:#?}", results.1);
-                }
-            } else {
-                break;
-            }
-        }
-
-        loop {
-            if let Some(results) = fpool.get_current() {
-                if !results.1.is_empty() {
-                    println!("Errors: {:#?}", results.1);
-                }
+            if let Some(mut results) = fpool.get_current(Some(Duration::from_millis(100))) {
+                page_vec.append(&mut results);
             } else {
                 break;
             }
@@ -80,10 +72,14 @@ impl Scraper {
 
         fpool.close();
 
-        println!("--------------------------------------------------FINISHED--------------------------------------------------");
-        println!("\nVisited URLs: {}", self.visited.len());
-        println!("elapsed time {}s", now.elapsed().as_secs());
-
+        
+        finished(now, self.visited.len());
         
     }
+}
+
+fn finished(i: Instant, total_visited: usize) {
+    println!("--------------------------------------------------FINISHED--------------------------------------------------");
+    println!("\nVisited URLs: {}", total_visited);
+    println!("elapsed time {}s", i.elapsed().as_secs());
 }
